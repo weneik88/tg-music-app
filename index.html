@@ -403,7 +403,7 @@ function rowHTML(t) {
   return `<div class="track" data-id="${esc(t.id)}">
     ${cover(t)}
     <div class="meta"><div class="t">${esc(t.title)}</div><div class="a">${esc(t.artist)}</div></div>
-    <span class="dur">${fmt(t.duration)}</span>
+    ${t.duration ? `<span class="dur">${fmt(t.duration)}</span>` : ''}
     <button class="more" aria-label="Действия">${icon('dots', 18)}</button>
   </div>`;
 }
@@ -445,8 +445,16 @@ let popular = null;
 let demoWarned = false;
 let renderedId = null;
 
+function openLink(url) {
+  haptic('medium');
+  if (tg?.openLink) tg.openLink(url);
+  else window.open(url, '_blank');
+}
 function play(t, list) {
-  if (!t.url) return toast('У этого трека нет аудио');
+  if (!t.url) {
+    if (t.link) return openLink(t.link);
+    return toast('У этого трека нет аудио');
+  }
   if (list) queue = list;
   else if (!queue.some(x => x.id === t.id)) queue = [t];
   current = t;
@@ -727,7 +735,7 @@ function renderHome() {
     const o = e.target.closest('[data-open]');
     if (o) return openLib(o.dataset.open);
     if (e.target.closest('#playAll')) {
-      const first = popular?.find(t => t.url);
+      const first = popular?.find(t => t.url || t.link);
       if (first) play(first, popular);
       else toast('Популярное пока недоступно');
     }
