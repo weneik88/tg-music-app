@@ -1,0 +1,842 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>Music</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Unbounded:wght@500;700&display=swap" rel="stylesheet">
+<style>
+/* ---------- tokens ---------- */
+:root {
+  --bg: #0a0b0f;
+  --surface: #14161d;
+  --surface2: #1c1f29;
+  --text: #eef0f6;
+  --muted: #7c8195;
+  /* акцент берётся из обложки текущего трека (JS меняет --hue) */
+  --hue: 350;
+  --accent: hsl(var(--hue) 90% 66%);
+  --accent2: hsl(calc(var(--hue) + 40) 80% 62%);
+  --nav-h: 64px;
+  --mini-h: 64px;
+  --gap: 8px;
+  --sb: env(safe-area-inset-bottom, 0px);
+  --bottom: calc(var(--nav-h) + var(--sb));
+  --display: "Unbounded", system-ui, sans-serif;
+  --body: "DM Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  color-scheme: dark;
+}
+body.has-player {
+  --bottom: calc(var(--nav-h) + var(--mini-h) + var(--gap) * 2 + var(--sb));
+}
+
+/* ---------- base ---------- */
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+html, body { height: 100%; overflow: hidden; }
+body {
+  background: var(--bg); color: var(--text);
+  font-family: var(--body); font-size: 15px; line-height: 1.35;
+  -webkit-font-smoothing: antialiased; user-select: none; -webkit-user-select: none;
+}
+input { user-select: text; -webkit-user-select: text; }
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+h1 { font-family: var(--display); font-size: 28px; font-weight: 700; line-height: 1.1; letter-spacing: -.02em; }
+h2 { font-family: var(--display); font-size: 16px; font-weight: 500; letter-spacing: -.01em; }
+.muted { color: var(--muted); font-size: 13px; }
+.pad { padding: 14px 2px; }
+.icon-btn { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; }
+.icon-btn:active { background: var(--surface2); }
+.ni { display: grid; place-items: center; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+
+/* ---------- screens ---------- */
+#app { position: fixed; inset: 0; overflow: hidden; }
+.screen {
+  position: absolute; top: 0; left: 0; right: 0; bottom: var(--bottom);
+  overflow-y: auto; -webkit-overflow-scrolling: touch;
+  padding: calc(env(safe-area-inset-top, 0px) + 18px) 18px 24px;
+  display: none;
+}
+.screen.active { display: block; animation: rise .32s cubic-bezier(.2, .8, .2, 1); }
+@keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+
+/* ---------- bottom nav ---------- */
+#nav {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 20;
+  height: calc(var(--nav-h) + var(--sb)); padding-bottom: var(--sb);
+  display: flex; background: rgba(12, 13, 18, .92);
+  backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+  border-top: 1px solid rgba(255, 255, 255, .06);
+}
+.nav-btn {
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 4px; color: var(--muted); font-size: 11px; font-weight: 500;
+  transition: color .2s;
+}
+.nav-btn .ni { transition: transform .25s cubic-bezier(.2, .8, .2, 1); }
+.nav-btn.on { color: var(--text); }
+.nav-btn.on .ni { color: var(--accent); transform: translateY(-2px); }
+
+/* ---------- mini player ---------- */
+#mini {
+  position: absolute; left: 8px; right: 8px; z-index: 25;
+  bottom: calc(var(--nav-h) + var(--sb) + var(--gap));
+  height: var(--mini-h); border-radius: 20px;
+  display: none; align-items: center; gap: 12px; padding: 0 10px 0 8px;
+  background: rgba(24, 26, 35, .92);
+  backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, .07);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, .45);
+  overflow: hidden; cursor: pointer;
+}
+#mini.show { display: flex; animation: rise .3s cubic-bezier(.2, .8, .2, 1); }
+#mini .cover { width: 46px; height: 46px; border-radius: 13px; }
+#mini .meta { flex: 1; min-width: 0; }
+.ctl-mini {
+  width: 42px; height: 42px; border-radius: 50%; flex: none;
+  display: grid; place-items: center; background: #f4f5f9; color: #0a0b0f;
+}
+.mini-prog { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: rgba(255, 255, 255, .08); }
+.mini-prog i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .25s linear; }
+
+/* ---------- covers & track rows ---------- */
+.cover {
+  width: 52px; height: 52px; border-radius: 14px; flex: none; position: relative; overflow: hidden;
+  display: grid; place-items: center; color: rgba(255, 255, 255, .92);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .35);
+}
+.cover img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.cover.big {
+  width: min(76vw, 320px); height: min(76vw, 320px); border-radius: 30px;
+  box-shadow: 0 30px 70px -20px hsl(var(--hue) 90% 50% / .55);
+}
+.eq {
+  position: absolute; inset: 0; display: none; align-items: flex-end; justify-content: center;
+  gap: 3px; padding-bottom: 16%; background: rgba(0, 0, 0, .42);
+}
+.eq span { width: 3px; height: 40%; border-radius: 2px; background: #fff; animation: eq .9s ease-in-out infinite; }
+.eq span:nth-child(2) { animation-delay: .2s; }
+.eq span:nth-child(3) { animation-delay: .4s; }
+.is-playing .eq { display: flex; }
+@keyframes eq { 0%, 100% { height: 22%; } 50% { height: 72%; } }
+
+.track { display: flex; align-items: center; gap: 13px; padding: 8px 4px 8px 0; border-radius: 14px; }
+.track:active { background: var(--surface); }
+.track .meta { flex: 1; min-width: 0; }
+.track.active .t { color: var(--accent); }
+.t { font-weight: 700; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.a { font-size: 13px; color: var(--muted); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dur { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.more { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; color: var(--muted); flex: none; }
+.more:active { background: var(--surface2); }
+
+.skel .cover, .skel .l {
+  background: linear-gradient(90deg, var(--surface) 25%, var(--surface2) 50%, var(--surface) 75%);
+  background-size: 200% 100%; animation: shimmer 1.3s infinite; box-shadow: none;
+}
+.skel .l { height: 11px; border-radius: 6px; width: 70%; margin-bottom: 10px; }
+.skel .l.s { width: 42%; margin-bottom: 0; }
+@keyframes shimmer { to { background-position: -200% 0; } }
+
+/* ---------- home & library ---------- */
+.hello { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+.avatar {
+  position: relative; width: 52px; height: 52px; border-radius: 50%; flex: none; overflow: hidden;
+  display: grid; place-items: center; color: #fff; font-family: var(--display); font-size: 18px; font-weight: 500;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .35);
+}
+.avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.links { margin: 22px 0 26px; border-top: 1px solid rgba(255, 255, 255, .07); }
+.link-row {
+  width: 100%; display: flex; align-items: center; gap: 14px; padding: 16px 2px;
+  border-bottom: 1px solid rgba(255, 255, 255, .07); font-weight: 500; font-size: 16px; text-align: left;
+}
+.link-row svg { color: var(--accent); flex: none; }
+.link-row span { flex: 1; }
+.link-row em { font-style: normal; color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; }
+.link-row:active { opacity: .6; }
+.sec { display: flex; align-items: center; justify-content: space-between; margin: 0 0 10px; }
+.pill {
+  display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 14px; border-radius: 999px;
+  background: var(--surface2); font-weight: 700; font-size: 13px;
+}
+.pill.accent { background: var(--accent); color: #0a0b0f; }
+.pl-row { display: flex; align-items: center; gap: 13px; padding: 8px 4px 8px 0; border-radius: 14px; cursor: pointer; }
+.pl-row:active { background: var(--surface); }
+.pl-row .meta { flex: 1; min-width: 0; }
+
+/* ---------- search ---------- */
+.search {
+  display: flex; align-items: center; gap: 10px; height: 52px; padding: 0 8px 0 15px; margin-top: 18px;
+  background: var(--surface); border: 1px solid rgba(255, 255, 255, .06); border-radius: 16px;
+  color: var(--muted); transition: border-color .2s, box-shadow .2s;
+}
+.search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 4px hsl(var(--hue) 90% 66% / .14); color: var(--accent); }
+.search i { display: grid; place-items: center; }
+.search input {
+  flex: 1; min-width: 0; height: 100%; background: none; border: 0; outline: 0;
+  font-size: 16px; color: var(--text);
+}
+.search input::placeholder { color: var(--muted); }
+.clr { width: 34px; height: 34px; border-radius: 50%; color: var(--muted); font-size: 20px; line-height: 1; }
+.clr:active { background: var(--surface2); }
+.chips { display: flex; gap: 8px; margin: 16px 0 6px; }
+.chip { height: 34px; padding: 0 14px; border-radius: 999px; background: var(--surface); color: var(--muted); font-weight: 700; font-size: 13px; }
+.chip.on { background: var(--accent); color: #0a0b0f; }
+
+/* ---------- empty state ---------- */
+.empty { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 56px 24px; color: var(--muted); }
+.empty .circle {
+  width: 76px; height: 76px; border-radius: 50%; margin-bottom: 18px;
+  display: grid; place-items: center; background: var(--surface); color: var(--accent);
+}
+.empty b { color: var(--text); font-family: var(--display); font-weight: 500; font-size: 15px; margin-bottom: 8px; }
+.empty span { font-size: 14px; line-height: 1.45; max-width: 260px; }
+
+/* ---------- full-screen panel (lists) ---------- */
+#panel {
+  position: fixed; inset: 0; z-index: 40; background: var(--bg);
+  display: flex; flex-direction: column;
+  transform: translateX(100%); transition: transform .34s cubic-bezier(.2, .8, .2, 1);
+}
+#panel.show { transform: none; }
+.topbar {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: calc(env(safe-area-inset-top, 0px) + 12px) 12px 10px;
+}
+.topbar h2 { flex: 1; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#pRight { width: 40px; display: grid; place-items: center; }
+#panelBody { flex: 1; overflow-y: auto; padding: 6px 18px calc(env(safe-area-inset-bottom, 0px) + 24px); }
+
+/* ---------- full player ---------- */
+#full {
+  position: fixed; inset: 0; z-index: 50; display: flex; flex-direction: column;
+  padding: calc(env(safe-area-inset-top, 0px) + 10px) 24px calc(env(safe-area-inset-bottom, 0px) + 20px);
+  background: radial-gradient(120% 70% at 50% 0%, hsl(var(--hue) 55% 24%) 0%, var(--bg) 68%);
+  transform: translateY(102%); transition: transform .4s cubic-bezier(.2, .8, .2, 1);
+}
+#full.show { transform: none; }
+.f-top { display: flex; align-items: center; justify-content: space-between; height: 44px; }
+.f-art { flex: 1; min-height: 0; display: grid; place-items: center; }
+.f-meta { margin-top: 10px; }
+.f-t { font-family: var(--display); font-size: 22px; font-weight: 500; letter-spacing: -.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.f-a { color: var(--muted); font-size: 15px; margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.prog { position: relative; height: 6px; margin-top: 22px; border-radius: 3px; background: rgba(255, 255, 255, .12); cursor: pointer; }
+.prog i { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 3px; background: var(--text); }
+.times { display: flex; justify-content: space-between; margin-top: 9px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.f-ctrl { display: flex; align-items: center; justify-content: space-between; margin: 16px 0 4px; }
+.f-ctrl button { width: 60px; height: 60px; border-radius: 50%; display: grid; place-items: center; }
+.f-ctrl .main { width: 76px; height: 76px; background: #f4f5f9; color: #0a0b0f; }
+.f-bottom { display: flex; justify-content: space-between; margin-top: 12px; }
+.f-bottom .on svg { color: var(--accent); fill: var(--accent); }
+
+/* ---------- sheets, toast ---------- */
+#overlay {
+  position: fixed; inset: 0; z-index: 60; background: rgba(0, 0, 0, .55);
+  opacity: 0; pointer-events: none; transition: opacity .25s;
+}
+#overlay.show { opacity: 1; pointer-events: auto; }
+#sheet {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 70; max-height: 78vh; overflow-y: auto;
+  padding: 10px 14px calc(env(safe-area-inset-bottom, 0px) + 16px);
+  background: var(--surface); border-radius: 24px 24px 0 0;
+  transform: translateY(105%); transition: transform .32s cubic-bezier(.2, .8, .2, 1);
+}
+#sheet.show { transform: none; }
+.grab { width: 40px; height: 4px; border-radius: 2px; background: #383b4a; margin: 0 auto 12px; }
+.sheet-head { display: flex; align-items: center; gap: 13px; padding: 4px 6px 14px; margin-bottom: 6px; border-bottom: 1px solid rgba(255, 255, 255, .06); }
+.sheet-head .meta { flex: 1; min-width: 0; }
+.sheet-title { font-family: var(--display); font-weight: 500; font-size: 16px; padding: 4px 6px 14px; }
+.sheet-item {
+  display: flex; align-items: center; gap: 14px; width: 100%; padding: 14px 8px;
+  border-radius: 14px; font-size: 15px; font-weight: 500; text-align: left;
+}
+.sheet-item:active { background: var(--surface2); }
+.sheet-item svg { color: var(--accent); flex: none; }
+.sheet-item .muted { margin-left: auto; }
+.input {
+  width: 100%; height: 52px; margin-bottom: 12px; padding: 0 15px; border-radius: 15px;
+  background: var(--surface2); border: 1px solid transparent; color: var(--text); font-size: 16px; outline: 0;
+}
+.input:focus { border-color: var(--accent); }
+.btn-full {
+  width: 100%; height: 52px; border-radius: 15px; background: var(--accent); color: #0a0b0f;
+  font-weight: 700; font-size: 16px;
+}
+#toast {
+  position: fixed; left: 50%; top: calc(env(safe-area-inset-top, 0px) + 14px); z-index: 100;
+  max-width: 88vw; padding: 11px 16px; border-radius: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  background: var(--surface2); box-shadow: 0 10px 30px rgba(0, 0, 0, .4); font-size: 14px; font-weight: 500;
+  opacity: 0; pointer-events: none; transform: translate(-50%, -14px); transition: opacity .25s, transform .25s;
+}
+#toast.show { opacity: 1; transform: translate(-50%, 0); }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <section class="screen active" id="home"></section>
+
+  <section class="screen" id="search">
+    <h1>Поиск</h1>
+    <label class="search">
+      <i data-icon="search" data-size="20"></i>
+      <input id="q" type="text" placeholder="Трек или исполнитель" autocomplete="off" enterkeyhint="search">
+      <button class="clr" id="clr" aria-label="Очистить">×</button>
+    </label>
+    <div class="chips">
+      <button class="chip on" data-scope="cat">Каталог</button>
+      <button class="chip" data-scope="fav">Избранное</button>
+    </div>
+    <div id="results"></div>
+  </section>
+
+  <section class="screen" id="library"></section>
+
+  <div id="mini">
+    <div id="miniCover"></div>
+    <div class="meta"><div class="t" id="miniT"></div><div class="a" id="miniA"></div></div>
+    <button class="ctl-mini" id="miniPlay" aria-label="Пауза или воспроизведение"></button>
+    <div class="mini-prog"><i id="miniBar"></i></div>
+  </div>
+
+  <nav id="nav">
+    <button class="nav-btn on" data-tab="home"><span class="ni" data-icon="home"></span><span>Главная</span></button>
+    <button class="nav-btn" data-tab="search"><span class="ni" data-icon="search"></span><span>Поиск</span></button>
+    <button class="nav-btn" data-tab="library"><span class="ni" data-icon="music"></span><span>Моя музыка</span></button>
+  </nav>
+</div>
+
+<div id="full">
+  <div class="f-top">
+    <button class="icon-btn" id="fClose" data-icon="down" data-size="26" aria-label="Свернуть"></button>
+    <span class="muted">Сейчас играет</span>
+    <button class="icon-btn" id="fMenu" data-icon="dots" aria-label="Действия"></button>
+  </div>
+  <div class="f-art" id="fArt"></div>
+  <div class="f-meta"><div class="f-t" id="fT"></div><div class="f-a" id="fA"></div></div>
+  <div class="prog" id="fProg"><i id="fBar"></i></div>
+  <div class="times"><span id="fCur">0:00</span><span id="fDur">0:00</span></div>
+  <div class="f-ctrl">
+    <button id="fPrev" data-icon="prev" data-size="28" aria-label="Назад"></button>
+    <button class="main" id="fPlay" aria-label="Пауза или воспроизведение"></button>
+    <button id="fNext" data-icon="next" data-size="28" aria-label="Далее"></button>
+  </div>
+  <div class="f-bottom">
+    <button class="icon-btn" id="fFav" data-icon="heart" data-size="24" aria-label="В избранное"></button>
+    <button class="icon-btn" id="fList" data-icon="list" data-size="22" aria-label="В плейлист"></button>
+  </div>
+</div>
+
+<div id="panel">
+  <div class="topbar">
+    <button class="icon-btn" id="pBack" data-icon="back" data-size="22" aria-label="Назад"></button>
+    <h2 id="pTitle"></h2>
+    <div id="pRight"></div>
+  </div>
+  <div id="panelBody"></div>
+</div>
+
+<div id="overlay"></div>
+<div id="sheet"></div>
+<div id="toast"></div>
+
+<script>
+/* ===================== Telegram ===================== */
+const tg = window.Telegram?.WebApp;
+tg?.ready();
+tg?.expand();
+tg?.disableVerticalSwipes?.();
+try { tg?.setHeaderColor?.('#0a0b0f'); tg?.setBackgroundColor?.('#0a0b0f'); } catch (e) {}
+
+/* ===================== utils ===================== */
+// Адрес сервера бота. Оставьте пустым, если страница открыта с того же домена, что и бот.
+// Если index.html лежит на GitHub Pages, укажите адрес сервера, например 'https://your-domain.example'
+const API_BASE = '';
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const fmt = s => { s = Math.max(0, Math.floor(s || 0)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
+const hueOf = s => { let h = 0; for (const c of String(s)) h = (h * 31 + c.charCodeAt(0)) % 360; return h; };
+const uid = () => Math.random().toString(36).slice(2, 10);
+const plural = n => {
+  const m = n % 10, h = n % 100;
+  if (m === 1 && h !== 11) return 'трек';
+  if (m >= 2 && m <= 4 && (h < 12 || h > 14)) return 'трека';
+  return 'треков';
+};
+const haptic = t => { try { tg?.HapticFeedback?.impactOccurred(t || 'light'); } catch (e) {} };
+
+const ICONS = {
+  home:   '<path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>',
+  search: '<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>',
+  music:  '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>',
+  heart:  '<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>',
+  clock:  '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
+  dots:   '<circle cx="5" cy="12" r="1.6" fill="currentColor"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><circle cx="19" cy="12" r="1.6" fill="currentColor"/>',
+  plus:   '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
+  back:   '<polyline points="15 18 9 12 15 6"/>',
+  down:   '<polyline points="6 9 12 15 18 9"/>',
+  list:   '<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>',
+  trash:  '<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>',
+  play:   '<path d="M8 5.5v13l10.5-6.5z" fill="currentColor" stroke="none"/>',
+  pause:  '<rect x="6" y="5" width="4" height="14" rx="1.2" fill="currentColor" stroke="none"/><rect x="14" y="5" width="4" height="14" rx="1.2" fill="currentColor" stroke="none"/>',
+  prev:   '<rect x="5" y="5.5" width="2.6" height="13" rx="1" fill="currentColor" stroke="none"/><path d="M19 5.5v13L9.5 12z" fill="currentColor" stroke="none"/>',
+  next:   '<rect x="16.4" y="5.5" width="2.6" height="13" rx="1" fill="currentColor" stroke="none"/><path d="M5 5.5v13l9.5-6.5z" fill="currentColor" stroke="none"/>',
+};
+const icon = (name, size = 22) =>
+  `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`;
+
+/* ===================== markup helpers ===================== */
+function cover(t, cls = 'cover', size = 22) {
+  const h = hueOf((t.title || '') + (t.artist || ''));
+  const bg = `linear-gradient(140deg, hsl(${h} 78% 58%), hsl(${(h + 55) % 360} 70% 26%))`;
+  const img = t.cover ? `<img src="${esc(t.cover)}" alt="" loading="lazy" onerror="this.remove()">` : icon('music', size);
+  return `<div class="${cls}" style="background:${bg}">${img}<div class="eq"><span></span><span></span><span></span></div></div>`;
+}
+function rowHTML(t) {
+  return `<div class="track" data-id="${esc(t.id)}">
+    ${cover(t)}
+    <div class="meta"><div class="t">${esc(t.title)}</div><div class="a">${esc(t.artist)}</div></div>
+    <span class="dur">${fmt(t.duration)}</span>
+    <button class="more" aria-label="Действия">${icon('dots', 18)}</button>
+  </div>`;
+}
+const plRow = p => `<div class="pl-row" data-pl="${esc(p.id)}">
+  ${p.tracks[0] ? cover(p.tracks[0], 'cover', 18)
+    : `<div class="cover" style="background:linear-gradient(140deg,var(--accent),var(--accent2))">${icon('list', 20)}</div>`}
+  <div class="meta"><div class="t">${esc(p.name)}</div><div class="a">${p.tracks.length} ${plural(p.tracks.length)}</div></div>
+</div>`;
+const emptyHTML = (title, text, ic = 'search') =>
+  `<div class="empty"><div class="circle">${icon(ic, 28)}</div><b>${esc(title)}</b><span>${esc(text)}</span></div>`;
+const skeleton = n => Array.from({ length: n }, () =>
+  `<div class="track skel"><div class="cover"></div><div class="meta"><div class="l"></div><div class="l s"></div></div></div>`).join('');
+
+function renderTracks(el, tracks) {
+  el.innerHTML = tracks.map(rowHTML).join('');
+  el.onclick = e => {
+    const row = e.target.closest('.track[data-id]');
+    if (!row) return;
+    const t = tracks.find(x => x.id === row.dataset.id);
+    if (!t) return;
+    if (e.target.closest('.more')) return trackMenu(t);
+    play(t, tracks);
+  };
+  refreshRows();
+}
+
+/* ===================== state ===================== */
+const KEY = 'tgmusic_v2';
+const saved = (() => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch (e) { return {}; } })();
+const state = { fav: saved.fav || [], hist: saved.hist || [], pl: saved.pl || [] };
+const persist = () => { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} };
+
+/* ===================== audio ===================== */
+const audio = new Audio();
+audio.preload = 'metadata';
+let current = null;
+let queue = [];
+let popular = null;
+let demoWarned = false;
+let renderedId = null;
+
+function play(t, list) {
+  if (!t.url) return toast('У этого трека нет аудио');
+  if (list) queue = list;
+  else if (!queue.some(x => x.id === t.id)) queue = [t];
+  current = t;
+  audio.src = t.url;
+  audio.play().catch(() => toast('Нажмите ▶, чтобы начать'));
+  addHistory(t);
+  haptic('medium');
+  sync();
+}
+function togglePlay() {
+  if (!current) return;
+  if (audio.paused) audio.play().catch(() => toast('Не удалось воспроизвести'));
+  else audio.pause();
+}
+function step(dir) {
+  if (!queue.length || !current) return;
+  let i = queue.findIndex(x => x.id === current.id);
+  for (let k = 0; k < queue.length; k++) {
+    i = (i + dir + queue.length) % queue.length;
+    if (queue[i].url) return play(queue[i]);
+  }
+  toast('В очереди нет доступного аудио');
+}
+function addHistory(t) {
+  state.hist = [t, ...state.hist.filter(x => x.id !== t.id)].slice(0, 50);
+  persist();
+}
+
+audio.addEventListener('play', sync);
+audio.addEventListener('pause', sync);
+audio.addEventListener('ended', () => step(1));
+audio.addEventListener('timeupdate', progress);
+audio.addEventListener('loadedmetadata', progress);
+audio.addEventListener('error', () => { if (current?.url) toast('Не удалось загрузить трек'); sync(); });
+
+function sync() {
+  const live = !!current && !audio.paused;
+  document.body.classList.toggle('has-player', !!current);
+  const mini = $('#mini'), full = $('#full');
+  mini.classList.toggle('show', !!current);
+  mini.classList.toggle('is-playing', live);
+  full.classList.toggle('is-playing', live);
+  if (current && renderedId !== current.id) {
+    renderedId = current.id;
+    document.documentElement.style.setProperty('--hue', hueOf(current.title + current.artist));
+    $('#miniCover').innerHTML = cover(current, 'cover', 20);
+    $('#fArt').innerHTML = cover(current, 'cover big', 72);
+    $('#miniT').textContent = current.title;
+    $('#miniA').textContent = current.artist;
+    $('#fT').textContent = current.title;
+    $('#fA').textContent = current.artist;
+  }
+  $('#miniPlay').innerHTML = icon(live ? 'pause' : 'play', 20);
+  $('#fPlay').innerHTML = icon(live ? 'pause' : 'play', 30);
+  $('#fFav').classList.toggle('on', !!current && isFav(current));
+  refreshRows(live);
+  progress();
+}
+function progress() {
+  const d = Number.isFinite(audio.duration) && audio.duration ? audio.duration : (current?.duration || 0);
+  const c = audio.currentTime || 0;
+  const pct = d ? Math.min(100, (c / d) * 100) : 0;
+  $('#miniBar').style.width = pct + '%';
+  $('#fBar').style.width = pct + '%';
+  $('#fCur').textContent = fmt(c);
+  $('#fDur').textContent = fmt(d);
+}
+function refreshRows(live = !!current && !audio.paused) {
+  document.querySelectorAll('.track[data-id]').forEach(el => {
+    const on = !!current && el.dataset.id === current.id;
+    el.classList.toggle('active', on);
+    el.classList.toggle('is-playing', on && live);
+  });
+}
+$('#fProg').addEventListener('click', e => {
+  if (!Number.isFinite(audio.duration) || !audio.duration) return;
+  const r = e.currentTarget.getBoundingClientRect();
+  audio.currentTime = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)) * audio.duration;
+});
+
+/* ===================== favorites ===================== */
+const isFav = t => state.fav.some(x => x.id === t.id);
+function toggleFav(t) {
+  const i = state.fav.findIndex(x => x.id === t.id);
+  if (i >= 0) { state.fav.splice(i, 1); toast('Убрано из избранного'); }
+  else { state.fav.unshift(t); toast('Добавлено в избранное'); }
+  persist();
+  haptic();
+  sync();
+}
+
+/* ===================== toast & sheets ===================== */
+let toastTimer;
+function toast(msg) {
+  const el = $('#toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 2200);
+}
+function openSheet(html, onAct) {
+  const sh = $('#sheet');
+  sh.innerHTML = `<div class="grab"></div>${html}`;
+  sh.onclick = e => {
+    const b = e.target.closest('[data-a]');
+    if (b && onAct) onAct(b.dataset.a);
+  };
+  $('#overlay').classList.add('show');
+  sh.classList.add('show');
+}
+function closeSheet() {
+  $('#overlay').classList.remove('show');
+  $('#sheet').classList.remove('show');
+}
+$('#overlay').onclick = closeSheet;
+
+function askName(title, done) {
+  openSheet(`
+    <div class="sheet-title">${esc(title)}</div>
+    <input class="input" id="plName" maxlength="40" placeholder="Например, для тренировки">
+    <button class="btn-full" data-a="ok">Создать</button>`, a => {
+    if (a !== 'ok') return;
+    const v = $('#plName').value.trim();
+    if (!v) return toast('Введите название');
+    closeSheet();
+    done(v);
+  });
+  setTimeout(() => $('#plName')?.focus(), 350);
+}
+
+function trackMenu(t) {
+  openSheet(`
+    <div class="sheet-head">${cover(t, 'cover', 18)}<div class="meta"><div class="t">${esc(t.title)}</div><div class="a">${esc(t.artist)}</div></div></div>
+    <button class="sheet-item" data-a="play">${icon('play', 18)}<span>Играть</span></button>
+    <button class="sheet-item" data-a="fav">${icon('heart', 18)}<span>${isFav(t) ? 'Убрать из избранного' : 'В избранное'}</span></button>
+    <button class="sheet-item" data-a="pl">${icon('list', 18)}<span>В плейлист</span></button>`, a => {
+    if (a === 'play') { closeSheet(); return play(t); }
+    if (a === 'fav') { closeSheet(); return toggleFav(t); }
+    if (a === 'pl') playlistPicker(t);
+  });
+}
+
+function playlistPicker(t) {
+  const rows = state.pl.map(p => `
+    <button class="sheet-item" data-a="${esc(p.id)}">${icon('list', 18)}<span>${esc(p.name)}</span><span class="muted">${p.tracks.length}</span></button>`).join('');
+  openSheet(`
+    <div class="sheet-title">Добавить в плейлист</div>
+    ${rows || '<p class="muted pad">Плейлистов пока нет</p>'}
+    <button class="sheet-item" data-a="new">${icon('plus', 18)}<span>Новый плейлист</span></button>`, a => {
+    if (a === 'new') {
+      return askName('Новый плейлист', name => {
+        createPlaylist(name, [t]);
+        toast(`Добавлено в «${name}»`);
+      });
+    }
+    const p = state.pl.find(x => x.id === a);
+    if (!p) return;
+    if (!p.tracks.some(x => x.id === t.id)) p.tracks.push(t);
+    persist();
+    closeSheet();
+    renderLibrary();
+    toast(`Добавлено в «${p.name}»`);
+  });
+}
+
+/* ===================== full-screen panel & full player ===================== */
+function syncBack() {
+  const bb = tg?.BackButton;
+  if (!bb) return;
+  const open = $('#full').classList.contains('show') || $('#panel').classList.contains('show');
+  if (open) bb.show(); else bb.hide();
+}
+tg?.BackButton?.onClick(() => {
+  if ($('#full').classList.contains('show')) closeFull();
+  else closePanel();
+});
+
+function openPanel(title, tracks, opts = {}) {
+  $('#pTitle').textContent = title;
+  $('#pRight').innerHTML = opts.onDelete
+    ? `<button class="icon-btn" id="pDel" aria-label="Удалить">${icon('trash', 20)}</button>` : '';
+  if (opts.onDelete) $('#pDel').onclick = opts.onDelete;
+  const body = $('#panelBody');
+  body.onclick = null;
+  if (tracks.length) renderTracks(body, tracks);
+  else body.innerHTML = emptyHTML('Пусто', opts.empty || 'Здесь пока ничего нет', 'music');
+  body.scrollTop = 0;
+  $('#panel').classList.add('show');
+  haptic('soft');
+  syncBack();
+}
+function closePanel() {
+  $('#panel').classList.remove('show');
+  syncBack();
+}
+$('#pBack').onclick = closePanel;
+
+function openFull() {
+  if (!current) return;
+  $('#full').classList.add('show');
+  syncBack();
+}
+function closeFull() {
+  $('#full').classList.remove('show');
+  syncBack();
+}
+$('#fClose').onclick = closeFull;
+$('#mini').onclick = e => { if (!e.target.closest('button')) openFull(); };
+$('#miniPlay').onclick = togglePlay;
+$('#fPlay').onclick = togglePlay;
+$('#fPrev').onclick = () => step(-1);
+$('#fNext').onclick = () => step(1);
+$('#fFav').onclick = () => { if (current) toggleFav(current); };
+$('#fMenu').onclick = () => { if (current) trackMenu(current); };
+$('#fList').onclick = () => { if (current) playlistPicker(current); };
+
+/* ===================== library ===================== */
+function openLib(kind) {
+  if (kind === 'fav') openPanel('Избранное', state.fav, { empty: 'Отмечайте треки сердечком, и они появятся здесь' });
+  else openPanel('История', state.hist, { empty: 'Здесь появятся треки, которые вы слушали' });
+}
+function openPl(id) {
+  const p = state.pl.find(x => x.id === id);
+  if (!p) return;
+  openPanel(p.name, p.tracks, {
+    empty: 'Добавляйте треки через меню ⋯ в списке',
+    onDelete: () => {
+      const doDel = () => deletePl(p.id);
+      if (tg?.showConfirm) tg.showConfirm(`Удалить «${p.name}»?`, ok => { if (ok) doDel(); });
+      else doDel();
+    },
+  });
+}
+function deletePl(id) {
+  state.pl = state.pl.filter(x => x.id !== id);
+  persist();
+  closePanel();
+  renderLibrary();
+  toast('Плейлист удалён');
+}
+function createPlaylist(name, tracks = []) {
+  state.pl.unshift({ id: uid(), name, tracks });
+  persist();
+  renderLibrary();
+}
+function renderLibrary() {
+  $('#library').innerHTML = `
+    <h1>Моя музыка</h1>
+    <div class="links">
+      <button class="link-row" data-open="fav">${icon('heart', 20)}<span>Избранное</span><em>${state.fav.length}</em></button>
+      <button class="link-row" data-open="hist">${icon('clock', 20)}<span>История</span><em>${state.hist.length}</em></button>
+    </div>
+    <div class="sec"><h2>Плейлисты</h2><button class="pill accent" id="newPl">${icon('plus', 14)}Создать</button></div>
+    <div>${state.pl.length ? state.pl.map(plRow).join('') : '<p class="muted pad">Создайте первый плейлист, и он появится здесь.</p>'}</div>`;
+  $('#library').onclick = e => {
+    if (e.target.closest('#newPl')) return askName('Новый плейлист', name => createPlaylist(name));
+    const o = e.target.closest('[data-open]');
+    if (o) return openLib(o.dataset.open);
+    const p = e.target.closest('[data-pl]');
+    if (p) openPl(p.dataset.pl);
+  };
+}
+
+/* ===================== home ===================== */
+function renderHome() {
+  const h = new Date().getHours();
+  const greet = h < 5 ? 'Доброй ночи' : h < 12 ? 'Доброе утро' : h < 18 ? 'Добрый день' : 'Добрый вечер';
+  const name = tg?.initDataUnsafe?.user?.first_name || 'друг';
+  $('#home').innerHTML = `
+    <div class="hello"><h1>${greet},<br>${esc(name)}</h1>${avatarBox(name)}</div>
+    <div class="links">
+      <button class="link-row" data-open="fav">${icon('heart', 20)}<span>Избранное</span><em>${state.fav.length}</em></button>
+      <button class="link-row" data-open="hist">${icon('clock', 20)}<span>История</span><em>${state.hist.length}</em></button>
+    </div>
+    <div class="sec"><h2>Популярное</h2><button class="pill accent" id="playAll">${icon('play', 14)}Слушать</button></div>
+    <div id="popList">${skeleton(5)}</div>`;
+  $('#home').onclick = e => {
+    const o = e.target.closest('[data-open]');
+    if (o) return openLib(o.dataset.open);
+    if (e.target.closest('#playAll')) {
+      const first = popular?.find(t => t.url);
+      if (first) play(first, popular);
+      else toast('Популярное пока недоступно');
+    }
+  };
+  loadPopular();
+  loadAvatar();
+}
+
+/* Заглушка-аватар: первая буква имени на цветном фоне. Фото подменяет её, если есть. */
+function avatarBox(name) {
+  const base = name || '?';
+  const h = hueOf(base);
+  return `<div class="avatar" id="avatar" style="background:linear-gradient(140deg,hsl(${h} 70% 55%),hsl(${(h + 50) % 360} 70% 30%))"><span>${esc(base.charAt(0).toUpperCase())}</span></div>`;
+}
+
+/* Фото профиля берём с сервера бота: он проверяет подпись initData и отдаёт аватарку только владельцу. */
+let avatarUrl = null;
+async function loadAvatar() {
+  const el = $('#avatar');
+  if (!el || !tg?.initData) return;
+  if (!avatarUrl) {
+    try {
+      const r = await fetch(API_BASE + '/api/avatar', { headers: { 'X-Init-Data': tg.initData }, cache: 'no-store' });
+      if (!r.ok) return;
+      avatarUrl = URL.createObjectURL(await r.blob());
+    } catch (e) {
+      return;
+    }
+  }
+  el.insertAdjacentHTML('beforeend', `<img src="${avatarUrl}" alt="">`);
+}
+
+async function loadPopular() {
+  if (!popular) popular = await api('/api/popular', () => DEMO);
+  const el = $('#popList');
+  if (el) renderTracks(el, popular);
+}
+
+/* ===================== search ===================== */
+const q = $('#q');
+let scope = 'cat';
+let searchTimer;
+q.addEventListener('input', () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(runSearch, 350);
+});
+$('#clr').onclick = () => { q.value = ''; runSearch(); q.focus(); };
+document.querySelectorAll('.chip').forEach(c => c.onclick = () => {
+  scope = c.dataset.scope;
+  document.querySelectorAll('.chip').forEach(x => x.classList.toggle('on', x === c));
+  runSearch();
+});
+async function runSearch() {
+  const term = q.value.trim();
+  const res = $('#results');
+  if (!term) {
+    res.innerHTML = emptyHTML('Что послушаем?', 'Ищите по названию трека или исполнителю');
+    return;
+  }
+  if (scope === 'fav') {
+    const low = term.toLowerCase();
+    const list = state.fav.filter(t => `${t.title} ${t.artist}`.toLowerCase().includes(low));
+    if (list.length) renderTracks(res, list);
+    else res.innerHTML = emptyHTML('Ничего не нашлось', 'В избранном нет такого трека');
+    return;
+  }
+  res.innerHTML = skeleton(5);
+  const list = await api(`/api/search?q=${encodeURIComponent(term)}`, () => demoSearch(term));
+  if (q.value.trim() !== term || scope !== 'cat') return;
+  if (list.length) renderTracks(res, list);
+  else res.innerHTML = emptyHTML('Ничего не нашлось', 'Попробуйте другое название или исполнителя');
+}
+
+/* ===================== API (with demo fallback) ===================== */
+async function api(path, fallback) {
+  try {
+    const r = await fetch(API_BASE + path, { cache: 'no-store' });
+    if (!r.ok) throw new Error(r.status);
+    return await r.json();
+  } catch (e) {
+    if (!demoWarned) { demoWarned = true; toast('Сервер не отвечает, показываю демо'); }
+    return fallback();
+  }
+}
+const DEMO = [
+  { id: 'demo1', title: 'Night Drive', artist: 'Demo Artist', duration: 214, cover: null, url: null },
+  { id: 'demo2', title: 'Coastline', artist: 'Lumen Vale', duration: 188, cover: null, url: null },
+  { id: 'demo3', title: 'Paper Lanterns', artist: 'Mira Okafor', duration: 242, cover: null, url: null },
+  { id: 'demo4', title: 'Low Tide', artist: 'Hollow Pines', duration: 201, cover: null, url: null },
+  { id: 'demo5', title: 'Glass Hours', artist: 'Demo Artist', duration: 176, cover: null, url: null },
+];
+const demoSearch = term => DEMO.filter(t => `${t.title} ${t.artist}`.toLowerCase().includes(term.toLowerCase()));
+
+/* ===================== navigation ===================== */
+function go(tab) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.toggle('active', s.id === tab));
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
+  if (tab === 'home') renderHome();
+  if (tab === 'library') renderLibrary();
+}
+document.querySelectorAll('.nav-btn').forEach(b => b.onclick = () => { haptic(); go(b.dataset.tab); });
+
+/* ===================== init ===================== */
+document.querySelectorAll('[data-icon]').forEach(el => {
+  el.innerHTML = icon(el.dataset.icon, Number(el.dataset.size) || 22);
+});
+go('home');
+runSearch();
+sync();
+</script>
+</body>
+</html>
